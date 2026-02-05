@@ -53,20 +53,21 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const publicKey = "pk_live_d52baea87b2c4e49b110aa5cda32260b33b0cb35";
+const publicKey = "pk_live_d52baea87b2c4e49b110aa5cda32260b33b0cb35"; // Paystack public key
+let currentUserId = "";
+let currentUserEmail = "";
 
 onAuthStateChanged(auth, async (user) => {
-  if (!user) { window.location.href = "login.html"; return; }
-  const uid = user.uid;
-  const userEmail = user.email;
+  if(!user){ window.location.href = "login.html"; return; }
+  currentUserId = user.uid;
+  currentUserEmail = user.email;
 
-  // Fetch investment plans
   const plansRef = collection(db, "investmentPlans");
   const plansSnap = await getDocs(plansRef);
   const container = document.getElementById("plansContainer");
   container.innerHTML = "";
 
-  if (plansSnap.empty) {
+  if(plansSnap.empty){
     container.innerHTML = "<p>No investment plans available yet.</p>";
   } else {
     plansSnap.forEach(docPlan => {
@@ -74,26 +75,26 @@ onAuthStateChanged(auth, async (user) => {
       const card = document.createElement("div");
       card.className = "card";
       card.innerHTML = `
-        <img src="${plan.image || ''}" alt="${plan.title}">
+        <img src="${plan.image}" alt="${plan.title}">
         <h3>${plan.title}</h3>
         <p>Duration: ${plan.duration} days</p>
         <p>Daily Return: ₦${plan.dailyReturn}</p>
         <p>Total Return: ₦${plan.totalReturn}</p>
         <p>Minimum Amount: ₦${plan.minAmount}</p>
-        <button>Invest Now</button>
+        <button>Invest ₦${plan.minAmount}</button>
       `;
       container.appendChild(card);
 
-      // Attach Paystack payment
-      card.querySelector("button").onclick = () => {
+      // Paystack payment
+      card.querySelector("button").onclick = ()=>{
         const amount = plan.minAmount * 100; // kobo
         const handler = PaystackPop.setup({
           key: publicKey,
-          email: userEmail,
+          email: currentUserEmail,
           amount: amount,
           currency: "NGN",
           callback: async function(response){
-            await addDoc(collection(db, "users", uid, "investments"), {
+            await addDoc(collection(db,"users",currentUserId,"investments"),{
               planId: docPlan.id,
               title: plan.title,
               amount: plan.minAmount,
@@ -104,7 +105,7 @@ onAuthStateChanged(auth, async (user) => {
               createdAt: serverTimestamp()
             });
 
-            await addDoc(collection(db, "users", uid, "activities"), {
+            await addDoc(collection(db,"users",currentUserId,"activities"),{
               message: `Payment successful for ${plan.title} plan.`,
               createdAt: serverTimestamp()
             });
