@@ -38,17 +38,7 @@ nav a.active { color:#00c896; font-weight:bold; }
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import { 
-  getFirestore, 
-  collection, 
-  getDocs, 
-  getDoc,
-  doc, 
-  addDoc, 
-  serverTimestamp,
-  query,
-  where
-} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, getDocs, doc, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCQ8TCMUAySwLSBN3-0W1GV4XWateS1rqQ",
@@ -64,86 +54,71 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 const publicKey = "pk_live_d52baea87b2c4e49b110aa5cda32260b33b0cb35";
-let currentUserId = "";
 
-onAuthStateChanged(auth, async (user)=>{
-  if(!user){ window.location.href="login.html"; return; }
+onAuthStateChanged(auth, async (user) => {
+  if (!user) { window.location.href = "login.html"; return; }
+  const uid = user.uid;
+  const userEmail = user.email;
 
-  currentUserId = user.uid;
-
-  // Fetch user balance correctly
-  const userRef = doc(db,"users",currentUserId);
-  const userSnap = await getDoc(userRef);
-  const currentBalance = userSnap.exists() ? userSnap.data().balance || 0 : 0;
-
-  // Fetch ONLY active investment plans
-  const plansQuery = query(
-    collection(db,"investmentPlans"),
-    where("status","==","active")
-  );
-
-  const plansSnap = await getDocs(plansQuery);
+  // Fetch investment plans
+  const plansRef = collection(db, "investmentPlans");
+  const plansSnap = await getDocs(plansRef);
   const container = document.getElementById("plansContainer");
   container.innerHTML = "";
 
-  if(plansSnap.empty){
+  if (plansSnap.empty) {
     container.innerHTML = "<p>No investment plans available yet.</p>";
-    return;
+  } else {
+    plansSnap.forEach(docPlan => {
+      const plan = docPlan.data();
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <img src="${plan.image || ''}" alt="${plan.title}">
+        <h3>${plan.title}</h3>
+        <p>Duration: ${plan.duration} days</p>
+        <p>Daily Return: ₦${plan.dailyReturn}</p>
+        <p>Total Return: ₦${plan.totalReturn}</p>
+        <p>Minimum Amount: ₦${plan.minAmount}</p>
+        <button>Invest Now</button>
+      `;
+      container.appendChild(card);
+
+      // Attach Paystack payment
+      card.querySelector("button").onclick = () => {
+        const amount = plan.minAmount * 100; // kobo
+        const handler = PaystackPop.setup({
+          key: publicKey,
+          email: userEmail,
+          amount: amount,
+          currency: "NGN",
+          callback: async function(response){
+            await addDoc(collection(db, "users", uid, "investments"), {
+              planId: docPlan.id,
+              title: plan.title,
+              amount: plan.minAmount,
+              dailyReturn: plan.dailyReturn,
+              totalReturn: plan.totalReturn,
+              duration: plan.duration,
+              status: "active",
+              createdAt: serverTimestamp()
+            });
+
+            await addDoc(collection(db, "users", uid, "activities"), {
+              message: `Payment successful for ${plan.title} plan.`,
+              createdAt: serverTimestamp()
+            });
+
+            alert("Payment successful! Investment added to your dashboard.");
+          },
+          onClose: function(){
+            alert("Payment cancelled.");
+          }
+        });
+        handler.openIframe();
+      };
+    });
   }
-
-  plansSnap.forEach(planDoc => {
-    const plan = planDoc.data();
-
-    const card = document.createElement("div");
-    card.className = "card";
-    card.innerHTML = `
-      <img src="${plan.image}" alt="${plan.title}">
-      <h3>${plan.title}</h3>
-      <p>Minimum Investment: ₦${plan.minAmount}</p>
-      <p>Duration: ${plan.duration} days</p>
-      <p>Daily Return: ₦${plan.dailyReturn}</p>
-      <p>Total Return: ₦${plan.totalReturn}</p>
-      <button>Invest ₦${plan.minAmount}</button>
-    `;
-
-    container.appendChild(card);
-
-    card.querySelector("button").onclick = ()=>{
-      if(currentBalance < plan.minAmount){
-        alert("Insufficient wallet balance.");
-        return;
-      }
-
-      const handler = PaystackPop.setup({
-        key: publicKey,
-        email: user.email,
-        amount: plan.minAmount * 100,
-        currency: "NGN",
-        callback: async function(){
-          await addDoc(collection(db,"users",currentUserId,"investments"),{
-            planId: planDoc.id,
-            title: plan.title,
-            amount: plan.minAmount,
-            dailyReturn: plan.dailyReturn,
-            totalReturn: plan.totalReturn,
-            duration: plan.duration,
-            status: "active",
-            createdAt: serverTimestamp()
-          });
-
-          await addDoc(collection(db,"users",currentUserId,"activities"),{
-            message: `You invested ₦${plan.minAmount} in ${plan.title}.`,
-            createdAt: serverTimestamp()
-          });
-
-          alert("Investment successful!");
-        },
-        onClose: ()=> alert("Payment cancelled.")
-      });
-
-      handler.openIframe();
-    };
-  });
 });
 </script>
 
