@@ -37,7 +37,6 @@ nav a.active { color:#00c896; font-weight:bold; }
 
 <div class="container">
 
-  <!-- Quick Stats -->
   <div class="grid">
     <div class="card"><h3>Total Earnings</h3><p>₦<span id="earnings">0</span></p></div>
     <div class="card"><h3>Referral Bonus</h3><p>₦<span id="referralBonus">0</span></p></div>
@@ -45,7 +44,6 @@ nav a.active { color:#00c896; font-weight:bold; }
     <div class="card"><h3>Active Investment</h3><p>₦<span id="activeInvestment">0</span></p></div>
   </div>
 
-  <!-- Actions -->
   <div class="actions">
     <button onclick="location.href='invest.html'">Invest Now</button>
     <button id="withdrawBtn">Withdraw</button>
@@ -53,7 +51,6 @@ nav a.active { color:#00c896; font-weight:bold; }
     <button onclick="location.href='alert.html'">Alerts</button>
   </div>
 
-  <!-- Notifications -->
   <div class="notifications">
     <h3>Recent Activities</h3>
     <ul id="activities">
@@ -74,7 +71,21 @@ nav a.active { color:#00c896; font-weight:bold; }
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import { getFirestore, doc, collection, getDocs, updateDoc, addDoc, query, where, orderBy, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  collection,
+  getDocs,
+  updateDoc,
+  addDoc,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  serverTimestamp,
+  limit
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCQ8TCMUAySwLSBN3-0W1GV4XWateS1rqQ",
@@ -89,84 +100,94 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-onAuthStateChanged(auth, async (user) => {
-  if (!user) { window.location.href='login.html'; return; }
+onAuthStateChanged(auth, (user) => {
+  if (!user) {
+    window.location.href = "login.html";
+    return;
+  }
 
   const uid = user.uid;
   const userRef = doc(db, "users", uid);
 
-  // Live user stats
-  onSnapshot(userRef, snap => {
-    if (snap.exists()) {
-      const data = snap.data();
-      document.getElementById("userName").textContent = data.name || "User";
-      document.getElementById("balance").textContent = data.balance || 0;
-      document.getElementById("earnings").textContent = data.totalEarnings || 0;
-      document.getElementById("referralBonus").textContent = data.referralBonus || 0;
-      document.getElementById("referrals").textContent = data.referrals || 0;
-      document.getElementById("activeInvestment").textContent = data.activeInvestment || 0;
-    }
+  onSnapshot(userRef, (snap) => {
+    if (!snap.exists()) return;
+    const data = snap.data();
+    document.getElementById("userName").textContent = data.name || "User";
+    document.getElementById("balance").textContent = data.balance || 0;
+    document.getElementById("earnings").textContent = data.totalEarnings || 0;
+    document.getElementById("referralBonus").textContent = data.referralBonus || 0;
+    document.getElementById("referrals").textContent = data.referrals || 0;
+    document.getElementById("activeInvestment").textContent = data.activeInvestment || 0;
   });
 
-  // Check investments for maturity and update wallet
   const investRef = collection(db, "users", uid, "investments");
-  const investSnap = await getDocs(investRef);
-  const now = new Date();
 
-  investSnap.forEach(async docSnap => {
-    const inv = docSnap.data();
-    if(inv.status === "active") {
+  onSnapshot(investRef, async (snapshot) => {
+    const now = new Date();
+
+    for (const docSnap of snapshot.docs) {
+      const inv = docSnap.data();
+      if (!inv.createdAt || inv.status !== "active") continue;
+
       const investedAt = inv.createdAt.toDate();
-      const endDate = new Date(investedAt.getTime() + inv.duration*24*60*60*1000);
-      if(now >= endDate){
-        await updateDoc(doc(db, "users", uid, "investments", docSnap.id), { status: "matured" });
+      const endDate = new Date(investedAt.getTime() + inv.duration * 86400000);
+
+      if (now >= endDate) {
+        await updateDoc(doc(db, "users", uid, "investments", docSnap.id), {
+          status: "matured"
+        });
+
+        const userSnap = await getDoc(userRef);
+        const balance = userSnap.data()?.balance || 0;
+
+        await updateDoc(userRef, {
+          balance: balance + (inv.totalReturn || 0)
+        });
+
         await addDoc(collection(db, "users", uid, "activities"), {
-          message: `Your ${inv.planId} investment has matured.`,
+          message: `Your ${inv.title} investment has matured.`,
           createdAt: serverTimestamp()
         });
-        const userSnap = await getDocs(doc(db,"users",uid));
-        const newBalance = (userSnap.data()?.balance || 0) + (inv.totalReturn || 0);
-        await updateDoc(userRef, { balance: newBalance });
       }
     }
   });
 
-  // Fetch recent 5 activities
   const activitiesRef = collection(db, "users", uid, "activities");
-  const q = query(activitiesRef, orderBy("createdAt","desc"), limit(5));
-  const list = document.getElementById("activities");
-  onSnapshot(q, snapshot => {
+  const q = query(activitiesRef, orderBy("createdAt", "desc"), limit(5));
+
+  onSnapshot(q, (snapshot) => {
+    const list = document.getElementById("activities");
     list.innerHTML = "";
-    if(snapshot.empty) {
+
+    if (snapshot.empty) {
       list.innerHTML = "<li>No notifications yet</li>";
-    } else {
-      snapshot.forEach(doc => {
-        const li = document.createElement("li");
-        li.textContent = doc.data().message;
-        list.appendChild(li);
-      });
+      return;
     }
+
+    snapshot.forEach((doc) => {
+      const li = document.createElement("li");
+      li.textContent = doc.data().message;
+      list.appendChild(li);
+    });
   });
 
-  // Listen for approved withdrawals
   const withdrawalRef = collection(db, "withdrawals");
-  const q2 = query(withdrawalRef, where("userId","==",uid));
-  onSnapshot(q2, snapshot => {
-    snapshot.forEach(async docW => {
+  const q2 = query(withdrawalRef, where("userId", "==", uid));
+
+  onSnapshot(q2, (snapshot) => {
+    snapshot.forEach(async (docW) => {
       const w = docW.data();
-      if(w.status === "approved" && !w.notified){
+      if (w.status === "approved" && !w.notified) {
         await addDoc(collection(db, "users", uid, "activities"), {
           message: `Your withdrawal of ₦${w.amount} has been approved.`,
           createdAt: serverTimestamp()
         });
-        await updateDoc(doc(db,"withdrawals",docW.id), { notified:true });
+        await updateDoc(doc(db, "withdrawals", docW.id), { notified: true });
       }
     });
   });
-
 });
 
-// Withdraw button
 document.getElementById("withdrawBtn").onclick = () => {
   window.location.href = "withdraw.html";
 };
